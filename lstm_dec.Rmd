@@ -1,5 +1,5 @@
 ---
-title: "Lancet Infection LSTM"
+title: "Infection LSTM"
 author: "Tiffany Le"
 date: "2025-12-12"
 output: pdf_document
