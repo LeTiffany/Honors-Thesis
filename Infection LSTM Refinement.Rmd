@@ -1,0 +1,305 @@
+---
+title: "Infection LSTM Refinement"
+author: "Tiffany Le"
+date: "2025-11-09"
+output: pdf_document
+---
+
+Activation functions: sigmoid, tanh, ReLu
+
+```{r, message = FALSE}
+library(readxl)
+library(car)
+library(bestglm)
+library(tensorflow)
+library(keras3)
+```
+
+```{r}
+infections <- read_excel("Data/Infections.xlsx")
+infections$date <- as.Date(infections$date)
+```
+
+```{r}
+infections$day <- as.numeric(infections$date - as.Date("2019-11-30"))
+infections$fog <- as.factor(infections$fog)
+infections$thunder <- as.factor(infections$thunder)
+infections$dust <- as.factor(infections$dust)
+infections$smoke <- as.factor(infections$smoke)
+infections$estpos <- ifelse(infections$posencounters == 0, 0, (infections$posencounters / infections$restests) * infections$encounters)
+```
+
+```{r}
+reduced <- infections[,c(2:23, 32, 33)]
+```
+
+```{r}
+normalize <- function(x) (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+
+normalized <- na.omit(as.data.frame(lapply(infections[, c(8, 17, 20, 32, 33)], normalize)))
+```
+
+```{r}
+samples <- nrow(normalized) - 120 - 10 + 1
+x <- array(NA, dim = c(samples, 120, 4))
+y <- rep(NA, samples)
+
+for (i in 1:samples) {
+  x[i,,] <- as.matrix(normalized[i:(i + 119), c(1:4)])
+  y[i] <- normalized[i + 120 + 10 - 1, 5]
+}
+```
+
+```{r}
+x_train <- x[1:(samples - 30),,]
+y_train <- y[1:(samples - 30)]
+
+x_test <- x[(samples - 29):samples,,]
+y_test <- y[(samples - 29):samples]
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(120, 4)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 5,
+  validation_split = 0.2
+)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+Loss: 0.1543881
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "tanh", input_shape = c(120, 4)) %>%
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 2,
+  validation_split = 0.2
+)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+Loss: 0.1165525
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+actual_test <- actual[(length(y_train) + 1):length(actual)]
+pred_test <- pred[(length(y_train) + 1):length(actual)]
+
+plot(actual_test, type = "l", col = "blue", lwd = 2,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted (Test)")
+
+lines(pred_test, col = "red", lwd = 2)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+samples <- nrow(normalized) - 120 - 30 + 1
+x <- array(NA, dim = c(samples, 120, 4))
+y <- rep(NA, samples)
+
+for (i in 1:samples) {
+  x[i,,] <- as.matrix(normalized[i:(i + 119), c(1:4)])
+  y[i] <- normalized[i + 120 + 30 - 1, 5]
+}
+```
+
+```{r}
+x_train <- x[1:(samples - 30),,]
+y_train <- y[1:(samples - 30)]
+
+x_test <- x[(samples - 29):samples,,]
+y_test <- y[(samples - 29):samples]
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "tanh", input_shape = c(120, 4)) %>%
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 2,
+  validation_split = 0.2
+)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+Loss: 0.1216493
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(120, 4)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 5,
+  validation_split = 0.2
+)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+Loss: 0.1377226
+
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```

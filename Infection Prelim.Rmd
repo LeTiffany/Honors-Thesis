@@ -1,0 +1,123 @@
+---
+title: "Preliminary Infection Analysis"
+author: "Tiffany Le"
+date: "2025-09-28"
+output: pdf_document
+---
+
+```{r}
+library(readxl)
+library(ggplot2)
+```
+
+```{r}
+infections <- read_excel("Infections.xlsx")
+infections$date <- as.Date(infections$date)
+```
+
+```{r}
+infections$day <- as.numeric(infections$date - as.Date("2019-11-30"))
+infections$fog <- as.factor(infections$fog)
+infections$thunder <- as.factor(infections$thunder)
+infections$dust <- as.factor(infections$dust)
+infections$smoke <- as.factor(infections$smoke)
+```
+
+```{r}
+ggplot(infections, aes(x = date, y = posencounters)) +
+  geom_line(color = "steelblue") +
+  geom_point(color = "darkgreen") +
+  labs(title = "Daily Positive Encounters",
+       x = "Date",
+       y = "Positive Encounters") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(infections, aes(x = date, y = rdposencounters)) +
+  geom_line(color = "red") +
+  labs(title = "Daily 30-Day Moving Average of Positive Encounters",
+       x = "Date",
+       y = "Average Positive Encounters") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(infections, aes(x = date, y = pm10)) +
+  geom_line(color = "forestgreen") +
+  labs(title = "Daily PM10 Concentration",
+       x = "Date",
+       y = "PM10 Concentration") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(infections, aes(x = date)) +
+  geom_line(aes(y = rdposencounters), color = "red") +
+  geom_line(aes(y = pm10), color = "forestgreen") +
+  labs(title = "Daily Positive Encounters and PM10 Concentration",
+       x = "Date",
+       y = "Count") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(infections, aes(x = date)) +
+  geom_smooth(aes(y = rdposencounters), color = "red") +
+  geom_smooth(aes(y = pm10), color = "forestgreen") +
+  labs(title = "Daily Positive Encounters and PM10 Concentration",
+       x = "Date",
+       y = NULL) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(infections, aes(x = date)) +
+  geom_smooth(aes(y = rdposencounters), color = "red") +
+  geom_smooth(aes(y = (evap * 100)), color = "steelblue") +
+  labs(title = "Daily Positive Encounters and Evaporation",
+       x = "Date",
+       y = NULL) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(infections, aes(x = date)) +
+  geom_smooth(aes(y = rdposencounters), color = "red") +
+  geom_smooth(aes(y = pm10), color = "forestgreen") +
+  geom_smooth(aes(y = (evap * 100)), color = "steelblue") +
+  labs(x = "Date") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(infections, aes(x = date)) +
+  geom_smooth(aes(y = rdposencounters), color = "red") +
+  geom_smooth(aes(y = (precip * 1000)), color = "darkblue") +
+  labs(title = "Daily Positive Encounters and Precipitation",
+       x = "Date",
+       y = NULL) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(infections, aes(x = date)) +
+  geom_smooth(aes(y = (precip * 10)), color = "darkblue") +
+  geom_smooth(aes(y = evap), color = "steelblue") +
+  labs(title = "Daily Precipitation and Evaporation",
+       x = "Date",
+       y = NULL) +
+  theme_minimal()
+```
+
+```{r}
+plot(rdposencounters ~ pm10, data = infections[infections$pm10 < 100,])
+abline(lm(rdposencounters ~ pm10, data = infections[infections$pm10 < 100,]), col = "red")
+```
+
+Certainly heteroscedasticity
+```{r}
+plot(rdposencounters ~ evap, data = infections[infections$evap < 1,])
+abline(lm(rdposencounters ~ evap, data = infections[infections$evap < 1,]), col = "red")
+```
+

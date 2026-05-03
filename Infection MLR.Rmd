@@ -1,0 +1,127 @@
+---
+title: "Multiple Linear Regression Evaluation"
+author: "Tiffany Le"
+date: "2025-09-27"
+output: pdf_document
+---
+
+```{r}
+library(readxl)
+library(bestglm)
+library(car)
+library(MASS)
+```
+
+```{r}
+infections <- read_excel("Infections.xlsx")
+infections$date <- as.Date(infections$date)
+```
+
+```{r}
+infections$day <- as.numeric(infections$date - as.Date("2019-11-30"))
+infections$fog <- as.factor(infections$fog)
+infections$thunder <- as.factor(infections$thunder)
+infections$dust <- as.factor(infections$dust)
+infections$smoke <- as.factor(infections$smoke)
+```
+
+```{r}
+mlr <- lm(posencounters ~ . -date -encounters -ordtests -restests -posencounters -rdordtests -rdrestests -rdposencounters -posrate, data = na.omit(infections))
+summary(mlr)
+```
+
+```{r}
+subinfect <- as.data.frame(na.omit(infections[, c(2:23, 32, 27)]))
+names(subinfect)[names(subinfect) == "posencounters"] <- "y"
+```
+
+```{r, message = FALSE}
+aic <- bestglm(subinfect, IC = "AIC")
+aic$Subsets[10,]
+```
+
+```{r}
+redmlr <- lm(posencounters ~ evap + atemp + otemp + fog + o3 + pm10 + pm2.5 + so2 + day, data = infections)
+summary(redmlr)
+```
+
+```{r}
+redmlr2 <- lm(posencounters ~ evap + atemp + otemp + fog + o3 + pm10 + so2 + day, data = infections)
+summary(redmlr2)
+```
+
+```{r}
+redmlr3 <- lm(posencounters ~ atemp + otemp + fog + o3 + pm10 + so2 + day, data = infections)
+summary(redmlr3)
+```
+
+```{r}
+redmlr4 <- lm(posencounters ~ atemp + otemp + o3 + pm10 + so2 + day, data = infections)
+summary(redmlr4)
+```
+
+Stepwise selection gives same result as AIC.
+```{r}
+step <- step(mlr, direction = "both")
+```
+
+```{r}
+summary(step)
+```
+
+High multicollinearity concern between atemp and otemp.
+```{r}
+vif(redmlr4)
+```
+
+```{r}
+redmlr5 <- lm(posencounters ~ otemp + o3 + pm10 + so2 + day, data = infections)
+summary(redmlr5)
+```
+
+```{r}
+redmlr6 <- lm(posencounters ~ o3 + pm10 + so2 + day, data = infections)
+summary(redmlr6)
+```
+
+Bad! Bad! Bad!
+```{r}
+plot(redmlr6$residuals, redmlr6$fitted.values)
+```
+
+```{r}
+tmlr <- lm(sqrt(posencounters) ~ atemp + otemp + o3 + pm10 + so2 + day, data = infections)
+summary(tmlr)
+```
+
+```{r}
+redmlr7 <- lm(posencounters ~ . -date -atemp -maxtemp -otemp -maxwind1 -no2 -o3 -encounters -ordtests -restests -posencounters -rdordtests -rdrestests -rdposencounters -posrate, data = na.omit(infections))
+summary(redmlr7)
+```
+
+```{r}
+vif(redmlr7)
+```
+
+```{r}
+subinfect2 <- as.data.frame(na.omit(infections[, c(2:4, 7, 9, 10, 12:17, 20:23, 32, 27)]))
+names(subinfect2)[names(subinfect2) == "posencounters"] <- "y"
+```
+
+```{r}
+aic2 <- bestglm(subinfect2)
+aic2$Subsets[5,]
+```
+
+```{r}
+redmlr8 <- lm(posencounters ~ evap + pm10 + so2 + day, data = infections)
+summary(redmlr8)
+```
+
+```{r}
+#check for missing
+#mixture model - inflated Poisson
+poisson <- glm(posencounters ~ evap + pm10 + so2 + day, family = poisson(link = "log"), data = na.omit(infections))
+summmary(poisson)
+```
+

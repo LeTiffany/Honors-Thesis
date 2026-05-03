@@ -1,0 +1,252 @@
+---
+title: "Final Infection LSTM"
+author: "Tiffany Le"
+date: "2026-2-10"
+output: pdf_document
+---
+
+Activation functions: sigmoid, tanh, ReLu
+
+```{r, message = FALSE}
+library(readxl)
+library(tensorflow)
+library(keras3)
+library(dplyr)
+library(zoo)
+library(ggplot2)
+library(patchwork)
+library(tidyverse)
+```
+
+```{r}
+tf$random$set_seed(1)
+```
+
+```{r}
+infections <- read_excel("Data/Infections.xlsx")
+infections$date <- as.Date(infections$date)
+```
+
+```{r}
+infections$day <- as.numeric(infections$date - as.Date("2019-11-30"))
+infections$fog <- as.factor(infections$fog)
+infections$thunder <- as.factor(infections$thunder)
+infections$dust <- as.factor(infections$dust)
+infections$smoke <- as.factor(infections$smoke)
+infections$estpos <- ifelse(infections$posencounters == 0, 0, (infections$posencounters / infections$restests) * infections$encounters)
+```
+
+```{r}
+p1 <- ggplot(infections, aes(x = encounters)) +
+  geom_histogram(binwidth = 1, fill = "#698B22", color = "black") +
+  labs(x = "Patients", y = "Frequency", tag = "A") +
+  theme(axis.title.y  = element_blank()) +
+  theme_classic()
+
+p2 <- ggplot(infections, aes(x = encounters)) +
+  geom_boxplot(fill = "#698B22") +
+  labs(x = "Patients", y = NULL) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  theme_classic()
+
+p3 <- ggplot(infections, aes(x = estpos)) +
+  geom_histogram(binwidth = 1, fill = "#1f77b4", color = "black") +
+  labs(x = "Patients", y = "Frequency", tag = "B") +
+  theme(axis.title.y  = element_blank()) +
+  theme_classic()
+
+p4 <- ggplot(infections, aes(x = estpos)) +
+  geom_boxplot(fill = "#1f77b4") +
+  labs(x = "Patients", y = NULL) +
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y  = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  theme_classic()
+
+title1 <- ggplot() +
+  annotate("text", x = 0, y = 0, label = "Distribution of Patients Diagnosed with CAP", hjust = 0.5) +
+  theme_void()
+
+title2 <- ggplot() +
+  annotate("text", x = 0, y = 0, label = "Estimated Distribution of Patients with CAP and CM", hjust = 0.5) +
+  theme_void()
+
+final_plot <- 
+  title1 /
+  (p1 | p2) /
+  title2 /
+  (p3 | p4) +
+  plot_layout(heights = c(0.2, 1, 0.2, 1))
+
+final_plot
+```
+
+```{r}
+reduced <- infections[,c(1, 6, 4, 2, 20, 21, 32, 33, 9, 10, 11, 12)]
+reduced <- reduced %>%
+  arrange(day) %>%
+  mutate(
+    date = date,
+    estpos = rollmean(estpos, k = 30, fill = NA, align = "right"),
+    maxtemp = as.numeric(scale(rollmean(maxtemp, k = 30, fill = NA, align = "right"))),
+    precip = as.numeric(scale(rollmean(precip, k = 30, fill = NA, align = "right"))),
+    wind = as.numeric(scale(rollmean(wind, k = 30, fill = NA, align = "right"))),
+    pm10 = as.numeric(scale(rollmean(pm10, k = 30, fill = NA, align = "right"))),
+    pm2.5 = as.numeric(scale(rollmean(pm2.5, k = 30, fill = NA, align = "right"))),
+    dir2 = as.numeric(scale(rollmean(dir2, k = 30, fill = NA, align = "right"))),
+    dir5 = as.numeric(scale(rollmean(dir5, k = 30, fill = NA, align = "right"))),
+    maxwind1 = as.numeric(scale(rollmean(maxwind1, k = 30, fill = NA, align = "right"))),
+    maxwind2 = as.numeric(scale(rollmean(maxwind2, k = 30, fill = NA, align = "right")))
+  )
+reduced <- na.omit(reduced)
+lancet <- reduced[, -c(1, 9, 10, 11, 12)]
+```
+
+```{r}
+window <- 365
+horizon <- 30
+samples <- nrow(lancet) - window - horizon + 1
+
+x <- array(NA, dim = c(samples, window, ncol(lancet) - 1))
+y <- array(NA, dim = c(samples, horizon))
+
+for (i in 1:samples) {
+  x[i,,] <- as.matrix(lancet[i:(i + window - 1), 1:(ncol(lancet) - 1)])
+  y[i, ] <- as.numeric(unlist(
+    lancet[(i + window):(i + window + horizon - 1), ncol(lancet)]
+  ))
+}
+```
+
+```{r}
+test_days <- 30
+  
+x_train <- x[1:(samples - test_days),,]
+y_train <- y[1:(samples - test_days), ]
+
+x_test  <- x[(samples - test_days + 1):samples,,]
+y_test  <- y[(samples - test_days + 1):samples, ]
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64,
+             input_shape = c(window, ncol(lancet) - 1)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = horizon)
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 32,
+  validation_data = list(x_test, y_test)
+)
+```
+
+```{r}
+df <- data.frame(
+  epoch = 1:length(history$metrics$loss),
+  loss = history$metrics$loss,
+  val_loss = history$metrics$val_loss
+)
+
+ggplot(df, aes(x = epoch)) +
+  geom_line(aes(y = loss, color = "Training Loss"), linewidth = 1) +
+  geom_line(aes(y = val_loss, color = "Validation Loss"), linewidth = 1) +
+  scale_color_manual(values = c("Training Loss" = "#1f77b4",
+                                "Validation Loss" = "#d62728")) +
+  labs(
+    x = "Epoch",
+    y = "MSE",
+    color = "",
+    title = "LSTM Training and Validation Loss Over Epochs"
+  ) +
+  theme_classic() +
+  theme(
+    legend.position = "top",
+    plot.title = element_text(hjust = 0.5),
+    axis.title = element_text()
+  )
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test  <- model %>% predict(x_test)
+
+pred_full <- c(pred_train[, horizon], pred_test[, horizon])
+true_full <- c(y_train[, horizon], y_test[, horizon])
+```
+
+```{r}
+mse_per_horizon <- colMeans((pred_test - y_test)^2)
+print(mse_per_horizon)
+```
+
+```{r}
+dates <- reduced$date[(window + horizon):length(reduced$date)]
+
+plot(
+  dates, true_full, type = "l",
+  col = "#1f77b4", lwd = 2,
+  ylab = "Cases", xlab = "",
+  main = "True and Predicted CM Cases (LSTM)"
+)
+
+lines(dates, pred_full, col = "#d62728", lwd = 2)
+
+usr <- par("usr")
+
+test_start <- length(pred_train_last) + 1
+test_end   <- length(pred_full)
+
+rect(
+  xleft  = dates[test_start],
+  xright = dates[test_end],
+  ybottom = usr[3],
+  ytop    = usr[4],
+  col = rgb(0.5, 0.5, 0.5, 0.25),
+  border = NA
+)
+
+lines(dates, true_full, col = "#1f77b4", lwd = 2)
+lines(dates, pred_full, col = "#d62728", lwd = 2)
+
+legend(
+  "topright",
+  legend = c("True", "Predicted"),
+  col = c("#1f77b4", "#d62728"),
+  lwd = 2, bty = "n"
+)
+```
+
+```{r}
+last_pred <- pred_test[nrow(pred_test),]
+last_true <- y_test[nrow(y_test),]
+```
+
+```{r}
+plot(1:horizon, last_true, type = "l", lwd = 2, col = "#1f77b4",ylim = c(0, 10),
+     xlab = "Days Ahead", ylab = "Infections",
+     main = "30-Day Forecast: True vs Predicted")
+
+lines(1:horizon, last_pred, lwd = 2, col = "#d62728")
+
+legend("topright", legend = c("True", "Predicted"),
+       col = c("#1f77b4", "#d62728"), lwd = 2, bty = "n")
+```

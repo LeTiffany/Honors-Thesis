@@ -1,0 +1,542 @@
+---
+title: "SHAP"
+author: "Tiffany Le"
+date: "2026-4-5"
+output: pdf_document
+---
+
+```{r, message = FALSE}
+library(kernelshap)
+library(shapviz)
+library(readxl)
+library(tensorflow)
+library(keras3)
+library(dplyr)
+library(zoo)
+library(ggplot2)
+library(patchwork)
+library(tidyverse)
+```
+
+```{r}
+tf$random$set_seed(1)
+```
+
+```{r}
+infections <- read_excel("Data/Infections.xlsx")
+infections$date <- as.Date(infections$date)
+```
+
+```{r}
+infections$day <- as.numeric(infections$date - as.Date("2019-11-30"))
+infections$fog <- as.factor(infections$fog)
+infections$thunder <- as.factor(infections$thunder)
+infections$dust <- as.factor(infections$dust)
+infections$smoke <- as.factor(infections$smoke)
+infections$estpos <- ifelse(infections$posencounters == 0, 0, (infections$posencounters / infections$restests) * infections$encounters)
+```
+
+```{r}
+reduced <- infections[,c(1, 6, 4, 2, 20, 21, 32, 33, 9, 10, 11, 12)]
+reduced <- reduced %>%
+  arrange(day) %>%
+  mutate(
+    date = date,
+    estpos = rollmean(estpos, k = 30, fill = NA, align = "right"),
+    maxtemp = as.numeric(scale(rollmean(maxtemp, k = 30, fill = NA, align = "right"))),
+    precip = as.numeric(scale(rollmean(precip, k = 30, fill = NA, align = "right"))),
+    wind = as.numeric(scale(rollmean(wind, k = 30, fill = NA, align = "right"))),
+    pm10 = as.numeric(scale(rollmean(pm10, k = 30, fill = NA, align = "right"))),
+    pm2.5 = as.numeric(scale(rollmean(pm2.5, k = 30, fill = NA, align = "right"))),
+    dir2 = as.numeric(scale(rollmean(dir2, k = 30, fill = NA, align = "right"))),
+    dir5 = as.numeric(scale(rollmean(dir5, k = 30, fill = NA, align = "right"))),
+    maxwind1 = as.numeric(scale(rollmean(maxwind1, k = 30, fill = NA, align = "right"))),
+    maxwind2 = as.numeric(scale(rollmean(maxwind2, k = 30, fill = NA, align = "right")))
+  )
+reduced <- na.omit(reduced)
+lancet <- reduced[, -c(1, 6, 9, 10, 11)]
+```
+
+```{r}
+window <- 365
+horizon <- 10
+samples <- nrow(lancet) - window - horizon + 1
+
+x <- array(NA, dim = c(samples, window, ncol(lancet) - 1))
+y <- array(NA, dim = c(samples, horizon))
+
+for (i in 1:samples) {
+  x[i,,] <- as.matrix(lancet[i:(i + window - 1), 1:(ncol(lancet) - 1)])
+  y[i, ] <- as.numeric(unlist(
+    lancet[(i + window):(i + window + horizon - 1), ncol(lancet)]
+  ))
+}
+```
+
+```{r}
+test_days <- 90
+  
+x_train <- x[1:(samples - test_days),,]
+y_train <- y[1:(samples - test_days), ]
+
+x_test  <- x[(samples - test_days + 1):samples,,]
+y_test  <- y[(samples - test_days + 1):samples, ]
+```
+
+```{r}
+model <- load_model("final.keras")
+```
+
+```{r}
+feature_names <- colnames(lancet)[1:(ncol(lancet) - 1)]
+```
+
+```{r}
+X_shap <- apply(x, c(1, 3), mean)
+colnames(X_shap) <- feature_names
+X_shap <- as.data.frame(X_shap)
+```
+
+```{r}
+pred_fun <- function(X) {
+  X_lstm <- array(
+    as.numeric(as.matrix(X)),
+    dim = c(
+      nrow(X),
+      dim(x)[2],   # 365-day window
+      ncol(X)      # features
+    )
+  )
+  
+  preds <- predict(model, X_lstm)
+  as.numeric(preds[, horizon])  # explain day-30 forecast
+}
+```
+
+```{r}
+set.seed(1)
+
+bg_idx <- sample(seq_len(nrow(X_shap)), 50)
+X_bg <- X_shap[bg_idx, ]
+
+X_explain <- X_shap[1:100, ]
+```
+
+```{r}
+dummy_model <- list()
+class(dummy_model) <- "shap_dummy"
+
+predict.shap_dummy <- function(object, newdata, ...) {
+  pred_fun(newdata)
+}
+
+shap_vals <- kernelshap(
+  object = dummy_model,
+  X = X_explain,
+  bg_X = X_bg
+)
+```
+
+
+```{r}
+sv <- shapviz(shap_vals, X_explain)
+```
+
+```{r}
+pred_fun <- function(X) {
+  X_lstm <- array(
+    as.numeric(as.matrix(X)),
+    dim = c(nrow(X), dim(x)[2], ncol(X))
+  )
+  preds <- predict(model, X_lstm)
+  as.numeric(preds[, 10])
+}
+```
+
+```{r}
+set.seed(1)
+
+bg_idx <- sample(seq_len(nrow(X_shap)), 50)
+X_bg <- X_shap[bg_idx, ]
+
+X_explain <- X_shap[1:100, ]
+```
+
+```{r}
+dummy_model <- list()
+class(dummy_model) <- "shap_dummy"
+
+predict.shap_dummy <- function(object, newdata, ...) {
+  pred_fun(newdata)
+}
+
+shap_vals <- kernelshap(
+  object = dummy_model,
+  X = X_explain,
+  bg_X = X_bg
+)
+```
+
+```{r}
+sv_importance(sv)
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+shap_long <- as.data.frame(sv$S) |>
+  mutate(row_id = row_number()) |>
+  pivot_longer(
+    -row_id,
+    names_to = "feature",
+    values_to = "shap"
+  )
+
+x_long <- as.data.frame(sv$X) |>
+  mutate(row_id = row_number()) |>
+  pivot_longer(
+    -row_id,
+    names_to = "feature",
+    values_to = "value"
+  )
+
+plot_df <- left_join(shap_long, x_long,
+                     by = c("row_id", "feature"))
+
+feature_order <- plot_df |>
+  group_by(feature) |>
+  summarise(imp = mean(abs(shap))) |>
+  arrange(imp) |>
+  pull(feature)
+
+plot_df$feature <- factor(plot_df$feature,
+                           levels = feature_order)
+
+library(scales)
+library(ggplot2)
+```
+
+```{r}
+ggplot(plot_df, aes(x = shap, y = feature, color = value)) +
+  geom_jitter(height = 0.2, size = 1.6, alpha = 0.7) +
+  scale_color_viridis_c() +
+  scale_x_continuous(
+    trans = pseudo_log_trans(base = 10)
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(
+    x = "SHAP value (pseudo-log scale, day-10 prediction)",
+    y = NULL,
+    color = "Feature value"
+  ) +
+  theme_classic()
+```
+
+```{r}
+library(ggplot2)
+library(viridis)
+
+plot_df <- data.frame(
+  shap    = as.vector(sv$S),
+  feature = rep(colnames(sv$S), each = nrow(sv$S)),
+  value   = as.vector(as.matrix(sv$X))
+)
+
+plot_df$feature <- factor(
+  plot_df$feature,
+  levels = rev(names(sort(colMeans(abs(sv$S)), decreasing = TRUE)))
+)
+
+ggplot(plot_df, aes(x = shap, y = feature)) +
+
+  # density (thickness)
+  geom_violin(
+    fill = "grey90",
+    scale = "width",
+    trim = TRUE
+  ) +
+
+  # individual SHAP points
+  geom_jitter(
+    aes(color = value),
+    height = 0.15,
+    size = 1.4,
+    alpha = 0.6
+  ) +
+
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+
+  scale_color_viridis_c(option = "C", name = "Feature value") +
+
+  scale_x_continuous(
+    trans = scales::pseudo_log_trans(sigma = 1e-4)
+  ) +
+
+  labs(
+    x = "SHAP value (impact on prediction)",
+    y = NULL,
+    title = "Feature influence on 10‑day LSTM prediction"
+  ) +
+
+  theme_classic(base_size = 13) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+```{r}
+plot_df$shap_abs <- abs(plot_df$shap)
+
+ggplot(plot_df, aes(x = shap, y = feature)) +
+
+  # violin = density / thickness
+  geom_violin(
+    aes(fill = shap_abs),
+    scale = "width",
+    trim = TRUE,
+    color = NA,
+    alpha = 0.9
+  ) +
+
+  # points = individual contributions
+  geom_jitter(
+    aes(color = shap_abs),
+    height = 0.15,
+    size = 1.4,
+    alpha = 0.7
+  ) +
+
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+
+  # SHAP-style color
+  scale_color_viridis_c(
+    option = "C",
+    name = "|SHAP value|",
+    trans = scales::pseudo_log_trans(sigma = 1e-4)
+  ) +
+  scale_fill_viridis_c(
+    option = "C",
+    guide = "none",
+    trans = scales::pseudo_log_trans(sigma = 1e-4)
+  ) +
+
+  # pseudo-log SHAP axis
+  scale_x_continuous(
+    trans = scales::pseudo_log_trans(sigma = 1e-4)
+  ) +
+
+  labs(
+    x = "SHAP value (impact on 10-day prediction)",
+    y = NULL,
+    title = "SHAP summary plot (LSTM, day-10 forecast)"
+  ) +
+
+  theme_classic(base_size = 13) +
+  theme(
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+```
+
+```{r}
+ggplot(plot_df, aes(x = shap, y = feature)) +
+  geom_jitter(
+    aes(color = abs(shap)),     # importance drives color
+    height = 0.25,
+    size = 1.6,
+    alpha = 0.7
+  ) +
+  scale_color_viridis_c(
+    option = "C",
+    name = "|SHAP value|"
+  ) +
+  scale_x_continuous(
+    trans = scales::pseudo_log_trans(sigma = 1e-4)
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(
+    x = "SHAP value (impact on prediction)",
+    y = NULL
+  ) +
+  theme_classic(base_size = 13)
+```
+
+```{r}
+shap_raw <- predict(
+  model_xgb,
+  dtrain,
+  predcontrib = TRUE
+)
+
+shap_df <- as.data.frame(shap_raw)
+
+shap_bias <- shap_df$BIAS
+shap_df$BIAS <- NULL
+
+dim(shap_df)
+```
+
+```{r}
+base_features <- colnames(lancet)[1:num_features]
+timesteps <- 120
+
+feature_names <- as.vector(
+  sapply(1:timesteps, function(t)
+    paste0(base_features, "_t-", timesteps - t + 1))
+)
+
+colnames(shap_df) <- feature_names
+shap_df <- shap_df[, !is.na(colnames(shap_df))]
+```
+
+```{r}
+library(dplyr)
+library(tidyr)
+
+shap_long <- shap_df |>
+  mutate(id = row_number()) |>
+  pivot_longer(
+    -id,
+    names_to = "feature_lag",
+    values_to = "shap"
+  ) |>
+  separate(
+    feature_lag,
+    into = c("feature", "lag"),
+    sep = "_t-",
+    remove = FALSE
+  )
+
+shap_feature <- shap_long |>
+  group_by(feature) |>
+  summarise(
+    mean_abs_shap = mean(abs(shap)),
+    mean_shap     = mean(shap)
+  ) |>
+  arrange(desc(mean_abs_shap))
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(shap_feature,
+       aes(x = reorder(feature, mean_abs_shap),
+           y = mean_abs_shap)) +
+  geom_col(fill = "#1f77b4") +
+  coord_flip() +
+  labs(
+    x = NULL,
+    y = "Mean |SHAP value|",
+    title = "XGBoost Feature Importance (SHAP, 10‑day forecast)"
+  ) +
+  theme_classic(base_size = 13)
+```
+
+```{r}
+library(dplyr)
+
+lstm_imp <- plot_df |>
+  group_by(feature) |>
+  summarise(
+    mean_abs_shap = mean(abs(shap), na.rm = TRUE)
+  ) |>
+  mutate(model = "LSTM")
+
+xgb_imp <- shap_df |>
+  pivot_longer(
+    cols = everything(),
+    names_to = "feature_lag",
+    values_to = "shap"
+  ) |>
+  tidyr::separate(
+    feature_lag,
+    into = c("feature", "lag"),
+    sep = "_t-",
+    remove = FALSE
+  ) |>
+  group_by(feature) |>
+  summarise(
+    mean_abs_shap = mean(abs(shap), na.rm = TRUE)
+  ) |>
+  mutate(model = "GBDT")
+
+combined_imp <- bind_rows(lstm_imp, xgb_imp)
+
+feature_order <- combined_imp |>
+  group_by(feature) |>
+  summarise(overall = mean(mean_abs_shap)) |>
+  arrange(overall) |>
+  pull(feature)
+
+combined_imp$feature <- factor(
+  combined_imp$feature,
+  levels = feature_order
+)
+
+combined_imp <- combined_imp |>
+  filter(feature != "estpos")
+
+combined_imp <- combined_imp |>
+  filter(!is.na(model))
+
+pretty_names <- c(
+  "day"        = "Day",
+  "pm2.5"      = "PM 2.5",
+  "pm10"       = "PM 10",
+  "maxtemp"    = "Temperature",
+  "wind"       = "Wind Speed",
+  "precip"     = "Precipitation"
+)
+
+combined_imp <- combined_imp |>
+  mutate(
+    feature_chr    = as.character(feature),
+    feature_pretty = dplyr::recode(feature_chr, !!!pretty_names)
+  )
+
+feature_order <- combined_imp |>
+  group_by(feature_pretty) |>
+  summarise(overall_imp = mean(mean_abs_shap, na.rm = TRUE)) |>
+  arrange(overall_imp) |>
+  pull(feature_pretty)
+
+combined_imp <- combined_imp |>
+  mutate(
+    feature_pretty = factor(feature_pretty, levels = feature_order)
+  )
+
+combined_imp$model <- factor(
+  combined_imp$model,
+  levels = c("LSTM", "GBDT")
+)
+```
+
+```{r}
+ggplot(combined_imp,
+       aes(x = mean_abs_shap, y = feature_pretty, fill = model)) +
+  geom_col(position = position_dodge(width = 0.7, reverse = TRUE), width = 0.6) +
+    scale_fill_manual(
+    values = c(
+      "LSTM" = "#1f77b4",
+      "GBDT" = "#d62728"
+    )
+  ) +
+  scale_x_continuous(
+    trans = scales::pseudo_log_trans(sigma = 1e-4),
+    breaks = scales::pretty_breaks(n = 3)   # ← fewer labels
+  ) +
+  labs(
+    x = "Mean |SHAP|",
+    y = NULL,
+    fill = "Model",
+    title = "LSTM and GBDT Feature Importance"
+  ) +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+
+

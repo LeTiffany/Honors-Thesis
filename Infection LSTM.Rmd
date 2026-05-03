@@ -1,0 +1,232 @@
+---
+title: "Infection LSTM"
+author: "Tiffany Le"
+date: "2025-10-12"
+output: pdf_document
+---
+
+```{r, message = FALSE}
+library(readxl)
+library(car)
+library(bestglm)
+library(keras3)
+```
+
+```{r}
+infections <- read_excel("Infections.xlsx")
+infections$date <- as.Date(infections$date)
+```
+
+```{r}
+infections$day <- as.numeric(infections$date - as.Date("2019-11-30"))
+infections$fog <- as.factor(infections$fog)
+infections$thunder <- as.factor(infections$thunder)
+infections$dust <- as.factor(infections$dust)
+infections$smoke <- as.factor(infections$smoke)
+infections$estpos <- ifelse(infections$posencounters == 0, 0, (infections$restests / infections$restests) * infections$encounters)
+```
+
+```{r, warning = FALSE, message = FALSE}
+reduced <- infections[,c(2:23, 32, 33)]
+names(reduced)[names(reduced) == "estpos"] <- "y"
+best <- bestglm(as.data.frame(na.omit(reduced)), IC = "CV", method = "exhaustive")
+```
+
+```{r}
+summary(best$BestModel)
+```
+
+```{r}
+vif(best$BestModel)
+```
+
+```{r}
+stepwise <- step(lm(estpos ~ ., data = na.omit(infections[, c(2:23, 32, 33)])), direction = "both")
+summary(stepwise)
+```
+
+```{r}
+vif(stepwise)
+```
+
+```{r}
+reduced <- lm(estpos ~ evap + otemp + dir5 + maxwind2 + fog + co + o3 + pm10 + so2 + day, data = infections)
+summary(reduced)
+```
+
+```{r}
+subinfect <- as.data.frame(na.omit(infections[, c(3, 8, 10, 12, 13, 17, 19, 20, 22, 32, 33)]))
+names(subinfect)[names(subinfect) == "estpos"] <- "y"
+```
+
+```{r}
+bestglm(subinfect)$Subsets[5,]
+```
+otemp, co, pm10, day
+
+```{r}
+subinfect2 <- as.data.frame(na.omit(infections[, c(2:4, 8, 10, 12:23, 32, 33)]))
+names(subinfect2)[names(subinfect2) == "estpos"] <- "y"
+```
+
+```{r}
+bestglm(subinfect2)$Subsets[5,]
+```
+
+```{r}
+normalize <- function(x) (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+
+normalized <- na.omit(as.data.frame(lapply(infections[, c(8, 17, 20, 32, 33)], normalize)))
+```
+
+```{r}
+samples <- nrow(normalized) - 120 - 10 + 1
+x <- array(NA, dim = c(samples, 120, 4))
+y <- rep(NA, samples)
+
+for (i in 1:samples) {
+  x[i,,] <- as.matrix(normalized[i:(i + 119), c(1:4)])
+  y[i] <- normalized[i + 120 + 10 - 1, 5]
+}
+```
+
+```{r}
+x_train <- x[1:(samples - 30),,]
+y_train <- y[1:(samples - 30)]
+
+x_test <- x[(samples - 29):samples,,]
+y_test <- y[(samples - 29):samples]
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(120, 4)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 5,
+  validation_split = 0.2
+)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+reduced <- na.omit(infections[, c(3, 8, 10, 12, 13, 17, 19, 20, 22, 32, 33)])
+normalized <- as.data.frame(lapply(reduced[, c(1:4, 6:11)], normalize))
+normalized$fog <- as.numeric(reduced$fog)
+```
+
+```{r}
+samples <- nrow(normalized) - 120 - 10 + 1
+x <- array(NA, dim = c(samples, 120, 10))
+y <- rep(NA, samples)
+
+for (i in 1:samples) {
+  x[i,,] <- as.matrix(normalized[i:(i + 119), c(1:9, 11)])
+  y[i] <- normalized[i + 120 + 10 - 1, 10]
+}
+```
+
+```{r}
+x_train <- x[1:(samples - 30),,]
+y_train <- y[1:(samples - 30)]
+
+x_test <- x[(samples - 29):samples,,]
+y_test <- y[(samples - 29):samples]
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(120, 10)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 5,
+  validation_split = 0.2
+)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+reduced <- na.omit(infections[, c(3, 8, 10, 12, 13, 17, 19, 20, 22, 32, 33)])
+normalized <- as.data.frame(lapply(reduced[, c(1:4, 6:11)], normalize))
+normalized$fog <- as.numeric(reduced$fog)
+```

@@ -1,0 +1,197 @@
+---
+title: "Sequence to Sequence"
+author: "Tiffany Le"
+date: "2026-01-11"
+output: pdf_document
+---
+
+```{r}
+horizon <- 10
+```
+
+```{r}
+library(readxl)
+library(dplyr)
+library(zoo)
+library(tensorflow)
+library(keras3)
+
+tf$random$set_seed(1)
+set.seed(1)
+```
+
+```{r}
+infections <- read_excel("Data/Infections.xlsx")
+infections$date <- as.Date(infections$date)
+
+infections$day <- as.numeric(infections$date - as.Date("2019-11-30"))
+infections$fog     <- as.factor(infections$fog)
+infections$thunder <- as.factor(infections$thunder)
+infections$dust    <- as.factor(infections$dust)
+infections$smoke   <- as.factor(infections$smoke)
+
+infections$estpos <- ifelse(
+  infections$posencounters == 0,
+  0,
+  (infections$posencounters / infections$restests) * infections$encounters
+)
+
+lancet <- infections[, c(6, 4, 2, 20, 21, 32, 33)]
+
+lancet <- lancet %>%
+  arrange(day) %>%
+  mutate(
+    estpos = rollmean(estpos, k = 30, fill = NA, align = "right"),
+    maxtemp = as.numeric(scale(rollmean(maxtemp, k = 30, fill = NA, align = "right"))),
+    precip  = as.numeric(scale(rollmean(precip,  k = 30, fill = NA, align = "right"))),
+    wind    = as.numeric(scale(rollmean(wind,    k = 30, fill = NA, align = "right"))),
+    pm10    = as.numeric(scale(rollmean(pm10,    k = 30, fill = NA, align = "right"))),
+    pm2.5   = as.numeric(scale(rollmean(pm2.5,   k = 30, fill = NA, align = "right")))
+  )
+
+lancet <- as.data.frame(na.omit(lancet))
+```
+
+```{r}
+window <- 120
+features <- ncol(lancet) - 1
+target_col <- ncol(lancet)
+
+samples <- nrow(lancet) - window - horizon + 1
+
+x <- array(NA, dim = c(samples, window, features))
+y <- matrix(NA, nrow = samples, ncol = horizon)
+
+for (i in 1:samples) {
+  x[i, , ] <- as.matrix(lancet[i:(i + window - 1), 1:features])
+  y[i, ] <- lancet[(i + window):(i + window + horizon - 1), target_col]
+}
+
+test_window <- 10
+train_end <- samples - test_window
+
+x_train <- x[1:train_end, , ]
+y_train <- y[1:train_end, ]
+
+x_test  <- x[(train_end + 1):samples, , ]
+y_test  <- y[(train_end + 1):samples, ]
+
+x_train <- array(as.numeric(x_train), dim = dim(x_train))
+x_test  <- array(as.numeric(x_test),  dim = dim(x_test))
+
+y_train <- as.matrix(y_train)
+y_test  <- as.matrix(y_test)
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(window, features)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = horizon)
+```
+
+```{r}
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 5,
+  validation_data = list(x_test, y_test)
+)
+
+plot(history)
+```
+
+```{r}
+which.min(history$metrics$val_loss)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test  <- model %>% predict(x_test)
+```
+
+```{r}
+i <- 1
+
+true_seq <- as.numeric(y_test[i, ])
+pred_seq <- as.numeric(pred_test[i, ])
+
+yr <- range(c(true_seq, pred_seq))
+
+plot(true_seq, type = "l", col = "blue", lwd = 2,
+     ylim = yr,
+     xlab = "Days Ahead", ylab = "Estimated Infections",
+     main = paste0("LSTM ", horizon, "-Day Forecast (Test Window ", i, ")"))
+
+lines(pred_seq, col = "red", lwd = 2)
+```
+
+```{r}
+last_window_start <- samples - test_window + window
+forecast_start_idx <- last_window_start
+forecast_end_idx   <- last_window_start + horizon - 1
+
+forecast_dates <- infections$date[forecast_start_idx:forecast_end_idx]
+
+true_seq  <- as.numeric(y_test[nrow(y_test), ])
+pred_seq  <- as.numeric(pred_test[nrow(pred_test), ])
+
+yr <- range(c(true_seq, pred_seq), na.rm = TRUE)
+
+plot(forecast_dates, true_seq, type = "l", col = "#1f77b4", lwd = 2,
+     ylim = yr,
+     xlab = "Date", ylab = "Estimated Infections",
+     main = paste0("True vs Predicted ", horizon, "-Day Forecast (Last Window)"))
+
+lines(forecast_dates, pred_seq, col = "#d62728", lwd = 2)
+
+legend("topright", legend = c("True", "Predicted"),
+       col = c("#1f77b4", "#d62728"), lwd = 2, bty = "n")
+```
+
+```{r}
+plot_lstm_kday <- function(
+    k, pred_train, pred_test, lancet, infections, window, horizon, samples
+) {
+  
+  if (k < 1 || k > horizon) {
+    stop("k must be between 1 and horizon")
+  }
+  
+  pred_k <- c(pred_train[, k], pred_test[, k])
+  true_k <- lancet$estpos[(window + k):(window + k + samples - 1)]
+  dates <- infections$date[(window + k):(window + k + samples - 1)]
+  
+  plot(dates, true_k, type = "l", col = "#1f77b4", lwd = 2,
+       xlab = "Date", ylab = "Estimated Infections",
+       main = paste0("True and Predicted Infections (LSTM ", k, "-Day Ahead)"))
+
+  lines(dates, pred_k, col = "#d62728", lwd = 2)
+
+  test_start <- nrow(pred_train) + 1
+  test_end <- length(pred_k)
+  
+  usr <- par("usr")
+  
+  rect(xleft = dates[test_start], xright = dates[test_end],
+       ybottom = usr[3], ytop = usr[4],
+       col = rgb(0.5, 0.5, 0.5, 0.25), border = NA)
+  
+  legend("topright", legend = c("True", "Predicted"),
+         col = c("#1f77b4", "#d62728"), lwd = 2, bty = "n")
+}
+```
+
+```{r}
+plot_lstm_kday(1, pred_train, pred_test, lancet, infections, window, horizon, samples)
+```
+

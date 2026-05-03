@@ -1,0 +1,105 @@
+---
+title: "Infection XGBoost"
+author: "Tiffany Le"
+date: "2025-11-09"
+output: pdf_document
+---
+
+```{r}
+library(xgboost)
+```
+
+```{r}
+infections <- read_excel("Data/Infections.xlsx")
+infections$date <- as.Date(infections$date)
+```
+
+```{r}
+infections$day <- as.numeric(infections$date - as.Date("2019-11-30"))
+infections$fog <- as.factor(infections$fog)
+infections$thunder <- as.factor(infections$thunder)
+infections$dust <- as.factor(infections$dust)
+infections$smoke <- as.factor(infections$smoke)
+infections$estpos <- ifelse(infections$posencounters == 0, 0, (infections$restests / infections$restests) * infections$encounters)
+```
+
+```{r}
+normalize <- function(x) (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))
+normalized <- na.omit(as.data.frame(lapply(infections[, c(8, 17, 20, 32, 33)], normalize)))
+X <- normalized[, 1:4]
+Y <- normalized[, 5]
+```
+
+```{r}
+samples <- nrow(normalized)
+
+x_train <- as.matrix(X[1:(samples - 30), ])
+y_train <- Y[1:(samples - 30)]
+
+x_test <- as.matrix(X[(samples - 29):samples, ])
+y_test <- Y[(samples - 29):samples]
+```
+
+```{r}
+d_train <- xgb.DMatrix(data = x_train, label = y_train)
+d_test  <- xgb.DMatrix(data = x_test, label = y_test)
+
+xgb_model <- xgb.train(
+  params = list(
+    objective = "reg:squarederror",
+    eval_metric = "rmse",
+    eta = 0.1,
+    max_depth = 6
+  ),
+  data = d_train,
+  nrounds = 100
+)
+```
+
+```{r}
+preds <- predict(xgb_model, d_test)
+sqrt(mean((preds - y_test)^2))
+```
+
+MSE: 0.283633
+
+```{r}
+pred_train <- predict(xgb_model, d_train)
+pred_test  <- predict(xgb_model, d_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+actual_test <- actual[(length(y_train) + 1):length(actual)]
+pred_test <- pred[(length(y_train) + 1):length(actual)]
+
+plot(actual_test, type = "l", col = "blue", lwd = 2,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted (Test)")
+
+lines(pred_test, col = "red", lwd = 2)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+

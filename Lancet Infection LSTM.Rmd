@@ -1,0 +1,456 @@
+---
+title: "Lancet Infection LSTM"
+author: "Tiffany Le"
+date: "2025-12-12"
+output: pdf_document
+---
+
+Activation functions: sigmoid, tanh, ReLu
+
+```{r, message = FALSE}
+library(readxl)
+library(tensorflow)
+library(keras3)
+library(dplyr)
+library(zoo)
+```
+
+```{r}
+tf$random$set_seed(1)
+```
+
+```{r}
+infections <- read_excel("Data/Infections.xlsx")
+infections$date <- as.Date(infections$date)
+```
+
+```{r}
+infections$day <- as.numeric(infections$date - as.Date("2019-11-30"))
+infections$fog <- as.factor(infections$fog)
+infections$thunder <- as.factor(infections$thunder)
+infections$dust <- as.factor(infections$dust)
+infections$smoke <- as.factor(infections$smoke)
+infections$estpos <- ifelse(infections$posencounters == 0, 0, (infections$posencounters / infections$restests) * infections$encounters)
+```
+
+```{r}
+lancet <- infections[,c(6, 4, 2, 20, 21, 32, 33)]
+lancet <- lancet %>%
+  arrange(day) %>%
+  mutate(
+    estpos = rollmean(estpos, k = 30, fill = NA, align = "right"),
+    maxtemp = as.numeric(scale(rollmean(maxtemp, k = 30, fill = NA, align = "right"))),
+    precip = as.numeric(scale(rollmean(precip, k = 30, fill = NA, align = "right"))),
+    wind = as.numeric(scale(rollmean(wind, k = 30, fill = NA, align = "right"))),
+    pm10 = as.numeric(scale(rollmean(pm10, k = 30, fill = NA, align = "right"))),
+    pm2.5 = as.numeric(scale(rollmean(pm2.5, k = 30, fill = NA, align = "right"))),
+  )
+lancet <- na.omit(lancet)
+```
+
+```{r}
+samples <- nrow(lancet) - 120 - 10 + 1
+x <- array(NA, dim = c(samples, 120, ncol(lancet) - 1))
+y <- rep(NA, samples)
+
+for (i in 1:samples) {
+  x[i,,] <- as.matrix(lancet[i:(i + 119), c(1:(ncol(lancet) - 1))])
+  y[i] <- lancet[i + 120 + 10 - 1, ncol(lancet)]
+}
+```
+
+```{r}
+x_train <- x[1:(samples - 30),,]
+y_train <- y[1:(samples - 30)]
+
+x_test <- x[(samples - 29):samples,,]
+y_test <- y[(samples - 29):samples]
+
+x_train <- array(as.numeric(x_train), dim = dim(x_train))
+y_train <- as.numeric(y_train)
+
+x_test  <- array(as.numeric(x_test),  dim = dim(x_test))
+y_test  <- as.numeric(y_test)
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(120, ncol(lancet) - 1)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam(learning_rate = 0.0005, clipnorm = 1.0)
+)
+```
+
+```{r}
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 5,
+  validation_split = 0.2
+)
+```
+
+```{r}
+plot(history)
+```
+
+```{r}
+which.min(history$metrics$val_loss)
+```
+
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(120, ncol(lancet) - 1)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam(learning_rate = 0.0005, clipnorm = 1.0)
+)
+```
+
+```{r}
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 33,
+  batch_size = 5,
+  validation_split = 0.2
+)
+```
+
+```{r}
+plot(history)
+```
+
+```{r}
+which.min(history$metrics$val_loss)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "tanh", input_shape = c(120, ncol(lancet) - 1)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 2,
+  validation_split = 0.2
+)
+```
+
+```{r}
+plot(history)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(120, ncol(lancet) - 1)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 32,
+  validation_split = 0.2
+)
+```
+
+```{r}
+plot(history)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Normalized Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Normalized Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(120, ncol(lancet) - 1)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 32,
+  validation_split = 0.1
+)
+```
+
+```{r}
+plot(history)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+dates <- infections$date[lancet$day[-(1:(120 + 10 - 1))]]
+
+plot(dates, actual, type = "l", col = "#1f77b4", lwd = 2,
+     ylab = "Infections", xlab = "Day",
+     main = "True and Predicted Infections")
+
+lines(dates, pred, col = "#d62728", lwd = 2)
+
+usr <- par("usr")
+xright <- max(as.numeric(dates), na.rm = TRUE)
+xleft <- xright - 30
+
+rect(xleft = xleft, xright = xright,
+     ybottom = usr[3], ytop = usr[4],
+     col = rgb(0.5, 0.5, 0.5, 0.25), border = NA)
+
+legend("topright", legend = c("True", "Predicted"),
+       col = c("#1f77b4", "#d62728"), lwd = 2, bty = "n")
+```
+
+```{r}
+model <- keras_model_sequential() %>%
+  layer_lstm(units = 64, activation = "sigmoid", input_shape = c(120, ncol(lancet) - 1)) %>%
+  layer_dropout(rate = 0.1) %>%
+  layer_dense(units = 1)
+
+model %>% compile(
+  loss = "mean_squared_error",
+  optimizer = optimizer_adam()
+)
+```
+
+```{r}
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 100,
+  batch_size = 32,
+  validation_data = list(x_test, y_test)
+)
+```
+
+```{r}
+plot(history)
+```
+
+```{r}
+model %>% evaluate(x_test, y_test)
+```
+
+```{r}
+pred_train <- model %>% predict(x_train)
+pred_test <- model %>% predict(x_test)
+
+pred <- c(pred_train, pred_test)
+actual <- c(y_train, y_test)
+```
+
+```{r}
+plot(actual, type = "l", col = "blue", lwd = 1,
+     ylab = "Infection Count", xlab = "Day",
+     main = "Actual vs. Predicted Infection Count")
+
+lines(pred, col = "red", lwd = 1)
+
+test_start <- length(y_train)
+test_end <- length(actual)
+
+rect(xleft = test_start, xright = test_end,
+     ybottom = par("usr")[3], ytop = par("usr")[4],
+     col = rgb(1, 1, 0, 0.5), border = NA)
+
+legend("topright", legend = c("Actual", "Predicted"),
+       col = c("blue", "red"), lwd = c(2, 2))
+```
+
+```{r}
+dates <- infections$date[lancet$day[-(1:(120 + 10 - 1))]]
+
+plot(dates, actual, type = "l", col = "#1f77b4", lwd = 2,
+     ylab = "Infections", xlab = "Day",
+     main = "True and Predicted Infections")
+
+lines(dates, pred, col = "#d62728", lwd = 2)
+
+usr <- par("usr")
+xright <- max(as.numeric(dates), na.rm = TRUE)
+xleft <- xright - 30
+
+rect(xleft = xleft, xright = xright,
+     ybottom = usr[3], ytop = usr[4],
+     col = rgb(0.5, 0.5, 0.5, 0.25), border = NA)
+
+legend("topright", legend = c("True", "Predicted"),
+       col = c("#1f77b4", "#d62728"), lwd = 2, bty = "n")
+```
