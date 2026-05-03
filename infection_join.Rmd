@@ -20,17 +20,6 @@ bucs_2024 <- read_excel("BUCS J18 2024.xlsx")[c(-388, -399),]
 ```
 
 ```{r}
-#do not run cell, code not used :)
-
-env$date <- as.Date(env$date, format = "%m/%d/%Y")
-bucs_2020$Date <- as.Date(as.numeric(bucs_2020$Date), origin = "1899-12-30")
-bucs_2021$Date <- as.Date(as.numeric(bucs_2021$Date), origin = "1899-12-30")
-bucs_2022$Date <- as.Date(as.numeric(bucs_2022$Date), origin = "1899-12-30")
-bucs_2023$Date <- as.Date(as.numeric(bucs_2023$Date), origin = "1899-12-30")
-bucs_2024$Date <- as.Date(as.numeric(bucs_2024$Date), origin = "1899-12-30")
-```
-
-```{r}
 names(env)[names(env) == "date"] <- "Date"
 ```
 
