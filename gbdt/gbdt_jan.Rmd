@@ -1,5 +1,5 @@
 ---
-title: "Infections XGBoost"
+title: "Infection GBDT"
 output: pdf_document
 date: "2026-01-10"
 ---
