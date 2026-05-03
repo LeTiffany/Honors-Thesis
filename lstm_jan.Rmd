@@ -1,5 +1,5 @@
 ---
-title: "Sequence to Sequence"
+title: "Infections LSTM"
 author: "Tiffany Le"
 date: "2026-01-11"
 output: pdf_document
